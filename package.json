@@ -1,7 +1,7 @@
 {
-  "name": "elastic-stream",
+  "name": "opensearch-stream",
   "version": "1.0.1",
-  "description": "Stream JSON from stdin to Elasticsearch.",
+  "description": "Stream JSON documents into Opensearch via command line.",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -9,7 +9,6 @@
   "author": "Fernando Matzdorf",
   "license": "ISC",
   "dependencies": {
-    "@elastic/elasticsearch": "^8.2.1",
     "@opensearch-project/opensearch": "^3.0.0",
     "array.prototype.flatmap": "^1.3.0",
     "command-line-args": "^5.2.1",
