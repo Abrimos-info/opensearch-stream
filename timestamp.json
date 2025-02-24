@@ -1,0 +1,31 @@
+{
+    "settings": {
+        "number_of_replicas": 0
+    },
+    "mappings": {
+        "dynamic": "true",
+        "dynamic_templates": [{
+            "strings_template": {
+                "match_mapping_type": "string",
+                "mapping": {
+                    "type": "text",
+                    "fielddata": true,
+                    "fields": { "keyword": { "type":  "keyword", "ignore_above": 512 } }
+                }
+            }
+            },{
+                "timestamp_template": {
+                    "match": "timestamp",
+                    "mapping": {
+                        "type" : "date",
+                        "format": "epoch_millis"
+                    }
+                }
+            },{
+                "floats_template": {
+                    "match_mapping_type": "long",
+                    "mapping": { "type": "float" }
+            }
+        }]
+    }
+}

@@ -1,0 +1,22 @@
+{
+    "settings": {
+        "number_of_replicas": 0
+    },
+    "mappings": {
+        "dynamic": "true",
+        "dynamic_templates": [{
+            "strings_template": {
+                "match_mapping_type": "string",
+                "mapping": {
+                    "type": "text",
+                    "fields": { "keyword": { "type":  "keyword", "ignore_above": 512 } }
+                }
+            }
+            },{
+                "floats_template": {
+                    "match_mapping_type": "long",
+                    "mapping": { "type": "float" }
+            }
+        }]
+    }
+}
