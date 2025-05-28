@@ -14,6 +14,7 @@ const optionDefinitions = [
     { name: 'batchSize', alias: 'b', type: Number, defaultValue: 100 }, // Size of batch to send to Bulk API
     { name: 'mappingsFile', alias: 'm', type: String }, // Path to file containing index mappings for Elasticsearch
     { name: 'excludeKeys', alias: 'e', type: String, multiple: true, defaultValue: [] }, // Keys to exclude when hashing document
+    { name: 'noData', alias: 'n', type: Boolean, defaultValue: false } // Use to terminate script when no data is passed
 ];
 const args = commandLineArgs(optionDefinitions);
 
@@ -33,14 +34,16 @@ createElasticIndex(esClient, args.index, args.mappingsFile)
     console.error('Error trying to create index: probably exists already.');
 })
 .then(() => {
-    getStdIn()
-    .resume()
-    // .pipe(es.map(function (data, cb) {
-    //     cb(null, newData);
-    // }))
-    .pipe(collectData(args.batchSize))
-    .pipe(sendToElastic())
-    .pipe(process.stdout);
+    if(!args.noData) {
+        getStdIn()
+        .resume()
+        // .pipe(es.map(function (data, cb) {
+        //     cb(null, newData);
+        // }))
+        .pipe(collectData(args.batchSize))
+        .pipe(sendToElastic())
+        .pipe(process.stdout);
+    }
 })
 .catch((e) => {
     console.error('Error during document processing:', e);
