@@ -4,7 +4,7 @@ const commandLineArgs = require('command-line-args');
 const { Client } = require("@opensearch-project/opensearch");
 const JSONStream = require('JSONStream');
 const es = require('event-stream');
-const Stream = require('stream').Stream
+const { Stream, Transform } = require('stream')
 const fs = require('fs');
 const hash = require('object-hash');
 
@@ -72,72 +72,67 @@ async function createElasticIndex(client, index, mappingsFile) {
 }
 
 const sendToElastic = function() {
-    var stream = new Stream();
-    stream.writable = stream.readable = true;
-    let erroredDocuments = [];
-
-    stream.write = async function (data) {
-        let realData = JSON.parse(data);
-        if(!realData || realData.length == 0) return;
-
-        const operations = realData.flatMap(doc => [{ create: { _id: hash(doc, { excludeKeys: function(key) { return args.excludeKeys.includes(key) } }) } }, doc])
-
-        try {
-            const bulkResponse = await esClient.bulk({ index: args.index, body: operations });
-            // const count = await esClient.count({ index: args.index });
-            console.log('batchSize', realData.length, operations.length, batchesProcessed++);
-            if (bulkResponse.errors) {
-                // The items array has the same order of the dataset we just indexed.
-                // The presence of the `error` key indicates that the operation
-                // that we did for the document has failed.
-                bulkResponse.items.forEach((action, i) => {
-                  const operation = Object.keys(action)[0]
-                  if (action[operation].error) {
-                    erroredDocuments.push({
-                      // If the status is 429 it means that you can retry the document,
-                      // otherwise it's very likely a mapping error, and you should
-                      // fix the document before to try it again.
-                      status: action[operation].status,
-                      error: action[operation].error,
-                      // operation: body[i * 2],
-                      // document: body[i * 2 + 1]
-                    })
-                  }
-              });
-              console.log( JSON.stringify(erroredDocuments, null, 4) );
+    return new Transform({
+        objectMode: true,
+        async transform(data, encoding, callback) {
+            if (!this.erroredDocuments) this.erroredDocuments = [];
+            
+            if (!data || data.length === 0) {
+                callback();
+                return;
             }
+
+            const operations = data.flatMap(doc => [{ create: { _id: hash(doc, { excludeKeys: function(key) { return args.excludeKeys.includes(key) } }) } }, doc])
+
+            try {
+                const bulkResponse = await esClient.bulk({ index: args.index, body: operations });
+                console.log('batchSize', data.length, operations.length, batchesProcessed++);
+                if (bulkResponse.errors) {
+                    bulkResponse.items.forEach((action, i) => {
+                      const operation = Object.keys(action)[0]
+                      if (action[operation].error) {
+                        this.erroredDocuments.push({
+                          status: action[operation].status,
+                          error: action[operation].error,
+                        })
+                      }
+                  });
+                  console.log( JSON.stringify(this.erroredDocuments, null, 4) );
+                }
+            }
+            catch(e) { 
+                console.log('Error during bulk:', e);
+            }
+            callback();
+        },
+        flush(callback) {
+            this.push(JSON.stringify(this.erroredDocuments, null, 4));
+            this.push('Total batches: ' + batchesProcessed);
+            callback();
         }
-        catch(e) { console.log('Error during bulk:', e) }
-    }
-
-    stream.end = function () {
-        stream.emit('data', JSON.stringify(erroredDocuments, null, 4))
-        stream.emit('data', 'Total batches: ' + batchesProcessed);
-        erroredDocuments = [];
-        stream.emit('close');
-    }
-
-    return stream;
+    });
 }
 
 const collectData = function(size) {
-    var stream = new Stream();
-    stream.writable = stream.readable = true;
-    var buffer = [];
-
-    stream.write = function (l) {
-        buffer.push(l);
-        if(buffer.length == size) {
-            stream.emit('data', JSON.stringify(buffer));
-            buffer = [];
+    return new Transform({
+        objectMode: true,
+        transform(chunk, encoding, callback) {
+            if (!this.buffer) this.buffer = [];
+            this.buffer.push(chunk);
+            
+            if (this.buffer.length === size) {
+                this.push(this.buffer); // Pass array directly, no stringify
+                this.buffer = [];
+            }
+            callback();
+        },
+        flush(callback) {
+            if (this.buffer && this.buffer.length > 0) {
+                this.push(this.buffer);
+            }
+            callback();
         }
-    }
-    stream.end = function () {
-        stream.emit('data', JSON.stringify(buffer));
-        buffer = [];
-        stream.emit('close');
-    }
-    return stream;
+    });
 }
 
 function getStdIn() {
