@@ -11,7 +11,7 @@ const hash = require('object-hash');
 const optionDefinitions = [
     { name: 'elasticUri', alias: 'u', type: String, defaultValue: 'http://localhost:9200/' }, // Elasticsearch URI
     { name: 'index', alias: 'i', type: String }, // Elasticsearch Index
-    { name: 'batchSize', alias: 'b', type: Number, defaultValue: 100 }, // Size of batch to send to Bulk API
+    { name: 'batchSize', alias: 'b', type: Number, defaultValue: 500 }, // Size of batch to send to Bulk API
     { name: 'mappingsFile', alias: 'm', type: String }, // Path to file containing index mappings for Elasticsearch
     { name: 'excludeKeys', alias: 'e', type: String, multiple: true, defaultValue: [] }, // Keys to exclude when hashing document
     { name: 'noData', alias: 'n', type: Boolean, defaultValue: false } // Use to terminate script when no data is passed
