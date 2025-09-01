@@ -86,11 +86,11 @@ const sendToElastic = function() {
             const bulkResponse = await esClient.bulk({ index: args.index, body: operations });
             // const count = await esClient.count({ index: args.index });
             console.log('batchSize', realData.length, operations.length, batchesProcessed++);
-            if (bulkResponse.errors) {
+            if (bulkResponse.body?.errors) {
                 // The items array has the same order of the dataset we just indexed.
                 // The presence of the `error` key indicates that the operation
                 // that we did for the document has failed.
-                bulkResponse.items.forEach((action, i) => {
+                bulkResponse.body.items.forEach((action, i) => {
                   const operation = Object.keys(action)[0]
                   if (action[operation].error) {
                     erroredDocuments.push({
