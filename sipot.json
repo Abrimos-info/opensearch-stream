@@ -1,0 +1,32 @@
+{
+    "settings": {
+        "number_of_replicas": 0,
+        "mapping.total_fields.limit": 5000
+    },
+    "mappings": {
+        "dynamic": "true",
+        "dynamic_templates": [{
+            "exclude_informacion": {
+                "match_mapping_type": "string",
+                "path_match": "informacion.*",
+                "mapping": {
+                    "type": "text"
+                }
+            }
+            },{
+            "strings_template": {
+                "match_mapping_type": "string",
+                "mapping": {
+                    "type": "text",
+                    "fielddata": true,
+                    "fields": { "keyword": { "type":  "keyword", "ignore_above": 512 } }
+                }
+            }
+            },{
+                "floats_template": {
+                    "match_mapping_type": "long",
+                    "mapping": { "type": "float" }
+            }
+        }]
+    }
+}
