@@ -105,6 +105,7 @@ const sendToElastic = function() {
                   }
               });
               console.log( JSON.stringify(erroredDocuments, null, 4) );
+              erroredDocuments = [];
             }
         }
         catch(e) { console.log('Error during bulk:', e) }
