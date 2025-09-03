@@ -14,7 +14,8 @@ const optionDefinitions = [
     { name: 'batchSize', alias: 'b', type: Number, defaultValue: 500 }, // Size of batch to send to Bulk API
     { name: 'mappingsFile', alias: 'm', type: String }, // Path to file containing index mappings for Elasticsearch
     { name: 'excludeKeys', alias: 'e', type: String, multiple: true, defaultValue: [] }, // Keys to exclude when hashing document
-    { name: 'noData', alias: 'n', type: Boolean, defaultValue: false } // Use to terminate script when no data is passed
+    { name: 'noData', alias: 'n', type: Boolean, defaultValue: false }, // Use to terminate script when no data is passed
+    { name: 'verbose', alias: 'v', type: Boolean, defaultValue: false } // Activate verbose output, as opposed to only errors
 ];
 const args = commandLineArgs(optionDefinitions);
 
@@ -33,7 +34,13 @@ let streamingFinished = false;
 // Try to create the index or see if it exists
 createElasticIndex(esClient, args.index, args.mappingsFile)
 .catch((e) => {
-    console.log('Index ' + args.index + ' already exists.');
+    switch(e.statusCode) {
+        case 401:
+            console.error('ERROR: Unauthorized.');
+            process.exit(401);
+        case 400:
+            if(args.verbose) console.log(e.body?.error?.reason);
+    }
 })
 .then(() => {
     if(!args.noData) {
@@ -74,6 +81,8 @@ const sendToElastic = function() {
     var stream = new Stream();
     stream.writable = stream.readable = true;
     let erroredDocuments = [];
+    let skippedDocuments = 0;
+    let batchSkipped = 0;
     let errorSummary = {};
 
     stream.write = async function (data) {
@@ -85,6 +94,7 @@ const sendToElastic = function() {
         try {
             const bulkResponse = await esClient.bulk({ index: args.index, body: operations });
             batchesProcessed++;
+            if(args.verbose) process.stdout.write('Processing batch ' + batchesProcessed + ', ' + realData.length + ' docs\n');
             
             if (bulkResponse.body?.errors) {
                 bulkResponse.body.items.forEach((action, i) => {
@@ -93,6 +103,11 @@ const sendToElastic = function() {
                         switch(action[operation].status) {
                             case 409:
                                 // Document version conflict: doc has same ID as already inserted doc
+                                if(args.verbose) {
+                                    if(!errorSummary['Skipped']) errorSummary['Skipped'] = 1;
+                                    else errorSummary['Skipped']++;
+                                }
+                                batchSkipped++;
                                 break;
                             default:
                                 erroredDocuments.push({
@@ -100,7 +115,9 @@ const sendToElastic = function() {
                                     // otherwise it's very likely a mapping error, and you should
                                     // fix the document before to try it again.
                                     status: action[operation].status,
-                                    error: action[operation].error?.reason || action[operation].error
+                                    error: action[operation].error?.reason || '(no reason found)',
+                                    type: action[operation].error?.type,
+                                    docIndex: i
                                 });
                                 if(errorSummary[action[operation].status]) errorSummary[action[operation].status]++;
                                 else errorSummary[action[operation].status] = 1;
@@ -110,32 +127,53 @@ const sendToElastic = function() {
                 });
                 
                 if(erroredDocuments.length > 0) {
-                    process.stdout.write('Batch ' + batchesProcessed + ' (' + realData.length + ' docs):\n');
-                    process.stdout.write( JSON.stringify(erroredDocuments, null, 4) );
-                    process.stdout.write( JSON.stringify(errorSummary, null, 4))
-                    process.stdout.write('\n**************************************************\n');
+                    process.stdout.write('====> BATCH ' + batchesProcessed + ' | ' + realData.length + ' DOCS | ' + batchSkipped + ' SKIPPED | ' + erroredDocuments.length + ' ERRORS\n');
+                    process.stdout.write( formatErroredDocs(erroredDocuments) );
+                    process.stdout.write( '\n' );
                     erroredDocuments = [];
-                    errorSummary = {};
                 }
+                batchSkipped = 0;
             }
 
+            if(args.verbose) process.stdout.write('Success!\n\n');
+
             if (batchesProcessed === batchesExpected && streamingFinished) {
-                console.log('All batches processed! Total:', batchesProcessed);
+                if(args.verbose) console.log('All batches processed! Total:', batchesProcessed);
+                process.stdout.write( formatErrorSummary(errorSummary))
             }
 
         }
         catch(e) { console.log('Error during bulk:', e) }
     }
 
-    stream.end = function () {
-        console.log('stream end');
-        // stream.emit('data', JSON.stringify(erroredDocuments, null, 4))
-        stream.emit('data', 'Total batches: ' + batchesProcessed);
-        // stream.emit('data', JSON.stringify(errorSummary, null, 4))
-        stream.emit('close');
-    }
-
     return stream;
+}
+
+function formatErroredDocs(docs) {
+    let errorStr = '';
+
+    docs.map( doc => {
+        errorStr += '* DOC ' + doc.docIndex + '\n';
+        errorStr += '-- Status: ' + doc.status + '\n';
+        errorStr += '-- Type: ' + doc.type + '\n';
+        errorStr += '-- Reason: ' + doc.error + '\n'
+    } );
+
+    return errorStr;
+}
+
+function formatErrorSummary(summary) {
+    let str = '';
+    let total = 0;
+
+    Object.keys(summary).map( (key, i) => {
+        if(i == 0) str += '====> SUMMARY\n';
+        str += 'Status: ' + key + '\t' + 'Count: ' + summary[key] + '\n';
+        total += parseInt(summary[key]);
+    } );
+    if(total > 0) str += 'Total: ' + total + '\n';
+    
+    return str;
 }
 
 const collectData = function(size) {
