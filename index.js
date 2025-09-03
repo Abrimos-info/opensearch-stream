@@ -28,6 +28,7 @@ const elasticNode = args.elasticUri;
 let esClient = getClient(elasticNode);
 let batchesExpected = 0;
 let batchesProcessed = 0;
+let streamingFinished = false;
 
 // Try to create the index or see if it exists
 createElasticIndex(esClient, args.index, args.mappingsFile)
@@ -118,7 +119,7 @@ const sendToElastic = function() {
                 }
             }
 
-            if (batchesProcessed === batchesExpected) {
+            if (batchesProcessed === batchesExpected && streamingFinished) {
                 console.log('All batches processed! Total:', batchesProcessed);
             }
 
@@ -152,6 +153,7 @@ const collectData = function(size) {
     }
     stream.end = function () {
         if(buffer.length > 0) batchesExpected++;
+        streamingFinished = true;
         stream.emit('data', JSON.stringify(buffer));
         buffer = [];
         stream.emit('close');
