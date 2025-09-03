@@ -26,20 +26,18 @@ if(!args.index) {
 // Make a new Elasticsearch client
 const elasticNode = args.elasticUri;
 let esClient = getClient(elasticNode);
+let batchesExpected = 0;
 let batchesProcessed = 0;
 
 // Try to create the index or see if it exists
 createElasticIndex(esClient, args.index, args.mappingsFile)
 .catch((e) => {
-    console.error('Error trying to create index: probably exists already.');
+    console.log('Index ' + args.index + ' already exists.');
 })
 .then(() => {
     if(!args.noData) {
         getStdIn()
         .resume()
-        // .pipe(es.map(function (data, cb) {
-        //     cb(null, newData);
-        // }))
         .pipe(collectData(args.batchSize))
         .pipe(sendToElastic())
         .pipe(process.stdout);
@@ -75,6 +73,7 @@ const sendToElastic = function() {
     var stream = new Stream();
     stream.writable = stream.readable = true;
     let erroredDocuments = [];
+    let errorSummary = {};
 
     stream.write = async function (data) {
         let realData = JSON.parse(data);
@@ -84,37 +83,55 @@ const sendToElastic = function() {
 
         try {
             const bulkResponse = await esClient.bulk({ index: args.index, body: operations });
-            // const count = await esClient.count({ index: args.index });
-            console.log('batchSize', realData.length, operations.length, batchesProcessed++);
+            batchesProcessed++;
+            
             if (bulkResponse.body?.errors) {
-                // The items array has the same order of the dataset we just indexed.
-                // The presence of the `error` key indicates that the operation
-                // that we did for the document has failed.
                 bulkResponse.body.items.forEach((action, i) => {
-                  const operation = Object.keys(action)[0]
-                  if (action[operation].error) {
-                    erroredDocuments.push({
-                      // If the status is 429 it means that you can retry the document,
-                      // otherwise it's very likely a mapping error, and you should
-                      // fix the document before to try it again.
-                      status: action[operation].status,
-                      error: action[operation].error,
-                      // operation: body[i * 2],
-                      // document: body[i * 2 + 1]
-                    })
-                  }
-              });
-              console.log( JSON.stringify(erroredDocuments, null, 4) );
-              erroredDocuments = [];
+                    const operation = Object.keys(action)[0]
+                    if (action[operation].error) {
+                        switch(action[operation].status) {
+                            case 409:
+                                // Document version conflict: doc has same ID as already inserted doc
+                                break;
+                            default:
+                                erroredDocuments.push({
+                                    // If the status is 429 it means that you can retry the document,
+                                    // otherwise it's very likely a mapping error, and you should
+                                    // fix the document before to try it again.
+                                    status: action[operation].status,
+                                    error: action[operation].error?.reason || action[operation].error
+                                });
+                                if(errorSummary[action[operation].status]) errorSummary[action[operation].status]++;
+                                else errorSummary[action[operation].status] = 1;
+                                break;
+                        }
+                    }
+                });
+                
+                if(erroredDocuments.length > 0) {
+                    process.stdout.write('Batch ' + batchesProcessed + ' (' + realData.length + ' docs):\n');
+                    process.stdout.write( JSON.stringify(erroredDocuments, null, 4) );
+                    process.stdout.write( JSON.stringify(errorSummary, null, 4))
+                    process.stdout.write('\n**************************************************\n');
+                    erroredDocuments = [];
+                    errorSummary = {};
+                }
             }
+
+            if (batchesProcessed === batchesExpected) {
+                console.log('All batches processed! Total:', batchesProcessed);
+                process.exit(0);
+            }
+
         }
         catch(e) { console.log('Error during bulk:', e) }
     }
 
     stream.end = function () {
-        stream.emit('data', JSON.stringify(erroredDocuments, null, 4))
+        console.log('stream end');
+        // stream.emit('data', JSON.stringify(erroredDocuments, null, 4))
         stream.emit('data', 'Total batches: ' + batchesProcessed);
-        erroredDocuments = [];
+        // stream.emit('data', JSON.stringify(errorSummary, null, 4))
         stream.emit('close');
     }
 
@@ -129,11 +146,13 @@ const collectData = function(size) {
     stream.write = function (l) {
         buffer.push(l);
         if(buffer.length == size) {
+            batchesExpected++;
             stream.emit('data', JSON.stringify(buffer));
             buffer = [];
         }
     }
     stream.end = function () {
+        if(buffer.length > 0) batchesExpected++;
         stream.emit('data', JSON.stringify(buffer));
         buffer = [];
         stream.emit('close');
