@@ -120,7 +120,6 @@ const sendToElastic = function() {
 
             if (batchesProcessed === batchesExpected) {
                 console.log('All batches processed! Total:', batchesProcessed);
-                process.exit(0);
             }
 
         }
