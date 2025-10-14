@@ -1,0 +1,24 @@
+{
+    "settings": {
+        "number_of_replicas": 0
+    },
+    "mappings": {
+        "dynamic": "true",
+        "dynamic_templates": [{
+                "long_template": {
+                    "match_mapping_type": "long",
+                    "mapping": { "type": "string" }
+            }
+        },{
+                "float_template": {
+                    "match_mapping_type": "float",
+                    "mapping": { "type": "string" }
+            }
+        },{
+                "double_template": {
+                    "match_mapping_type": "double",
+                    "mapping": { "type": "string" }
+            }
+        }]
+    }
+}
