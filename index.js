@@ -15,12 +15,19 @@ const optionDefinitions = [
     { name: 'mappingsFile', alias: 'm', type: String }, // Path to file containing index mappings for Elasticsearch
     { name: 'excludeKeys', alias: 'e', type: String, multiple: true, defaultValue: [] }, // Keys to exclude when hashing document
     { name: 'noData', alias: 'n', type: Boolean, defaultValue: false }, // Use to terminate script when no data is passed
-    { name: 'verbose', alias: 'v', type: Boolean, defaultValue: false } // Activate verbose output, as opposed to only errors
+    { name: 'verbose', alias: 'v', type: Boolean, defaultValue: false }, // Activate verbose output, as opposed to only errors
+    { name: 'upsert', alias: 's', type: Boolean, defaultValue: false }, // Use upsert mode (index operation) instead of create-only mode
+    { name: 'idField', alias: 'd', type: String } // Field name to use as document ID for upserts
 ];
 const args = commandLineArgs(optionDefinitions);
 
 if(!args.index) {
     console.error('ERROR: no index specified.');
+    process.exit(1);
+}
+
+if(args.upsert && !args.idField) {
+    console.error('ERROR: upsert mode requires specifying an ID field with --idField or -d.');
     process.exit(1);
 }
 
@@ -89,7 +96,26 @@ const sendToElastic = function() {
         let realData = JSON.parse(data);
         if(!realData || realData.length == 0) return;
 
-        const operations = realData.flatMap(doc => [{ create: { _id: hash(doc, { excludeKeys: function(key) { return args.excludeKeys.includes(key) } }) } }, doc])
+        const operations = realData.flatMap(doc => {
+            let docId;
+            if (args.upsert && args.idField) {
+                // Use specified field as ID for upserts, Base64-encoded
+                const fieldValue = doc[args.idField];
+                if (fieldValue === undefined || fieldValue === null) {
+                    throw new Error(`Document missing required ID field '${args.idField}': ${JSON.stringify(doc)}`);
+                }
+                docId = Buffer.from(String(fieldValue)).toString('base64');
+                // Use update operation with doc_as_upsert for partial updates
+                return [
+                    { update: { _id: docId } },
+                    { doc: doc, doc_as_upsert: true }
+                ];
+            } else {
+                // Use hash-based ID for create operations
+                docId = hash(doc, { excludeKeys: function(key) { return args.excludeKeys.includes(key) } });
+                return [{ create: { _id: docId } }, doc];
+            }
+        })
 
         try {
             const bulkResponse = await esClient.bulk({ index: args.index, body: operations });
@@ -103,12 +129,16 @@ const sendToElastic = function() {
                         switch(action[operation].status) {
                             case 409:
                                 // Document version conflict: doc has same ID as already inserted doc
-                                if(args.verbose) {
-                                    if(!errorSummary['Skipped']) errorSummary['Skipped'] = 1;
-                                    else errorSummary['Skipped']++;
+                                // This should only happen in create mode, not upsert mode
+                                if(!args.upsert) {
+                                    if(args.verbose) {
+                                        if(!errorSummary['Skipped']) errorSummary['Skipped'] = 1;
+                                        else errorSummary['Skipped']++;
+                                    }
+                                    batchSkipped++;
+                                    break;
                                 }
-                                batchSkipped++;
-                                break;
+                                // In upsert mode, treat 409 as a regular error
                             default:
                                 erroredDocuments.push({
                                     // If the status is 429 it means that you can retry the document,
