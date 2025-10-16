@@ -17,7 +17,8 @@ const optionDefinitions = [
     { name: 'noData', alias: 'n', type: Boolean, defaultValue: false }, // Use to terminate script when no data is passed
     { name: 'verbose', alias: 'v', type: Boolean, defaultValue: false }, // Activate verbose output, as opposed to only errors
     { name: 'upsert', alias: 's', type: Boolean, defaultValue: false }, // Use upsert mode (index operation) instead of create-only mode
-    { name: 'idField', alias: 'd', type: String } // Field name to use as document ID for upserts
+    { name: 'idField', alias: 'd', type: String }, // Field name to use as document ID for upserts
+    { name: 'retryOnConflict', alias: 'r', type: Number, defaultValue: 3 } // Number of times to retry update operations on version conflict
 ];
 const args = commandLineArgs(optionDefinitions);
 
@@ -96,6 +97,25 @@ const sendToElastic = function() {
         let realData = JSON.parse(data);
         if(!realData || realData.length == 0) return;
 
+        // In upsert mode, deduplicate documents within the batch to avoid version conflicts
+        // Keep only the last occurrence of each document ID
+        if (args.upsert && args.idField) {
+            const dedupMap = new Map();
+            realData.forEach(doc => {
+                const fieldValue = doc[args.idField];
+                if (fieldValue !== undefined && fieldValue !== null) {
+                    const idKey = String(fieldValue);
+                    dedupMap.set(idKey, doc);
+                }
+            });
+            const originalCount = realData.length;
+            realData = Array.from(dedupMap.values());
+            const deduplicatedCount = originalCount - realData.length;
+            if (deduplicatedCount > 0 && args.verbose) {
+                process.stdout.write(`Deduplicated ${deduplicatedCount} documents from batch (${originalCount} -> ${realData.length})\n`);
+            }
+        }
+
         const operations = realData.flatMap(doc => {
             let docId;
             if (args.upsert && args.idField) {
@@ -107,7 +127,7 @@ const sendToElastic = function() {
                 docId = Buffer.from(String(fieldValue)).toString('base64');
                 // Use update operation with doc_as_upsert for partial updates
                 return [
-                    { update: { _id: docId } },
+                    { update: { _id: docId, retry_on_conflict: args.retryOnConflict } },
                     { doc: doc, doc_as_upsert: true }
                 ];
             } else {
