@@ -119,12 +119,12 @@ const sendToElastic = function() {
         const operations = realData.flatMap(doc => {
             let docId;
             if (args.upsert && args.idField) {
-                // Use specified field as ID for upserts, Base64-encoded
+                // Use specified field as ID for upserts, hashed to ensure consistent length
                 const fieldValue = doc[args.idField];
                 if (fieldValue === undefined || fieldValue === null) {
                     throw new Error(`Document missing required ID field '${args.idField}': ${JSON.stringify(doc)}`);
                 }
-                docId = Buffer.from(String(fieldValue)).toString('base64');
+                docId = hash(String(fieldValue));
                 // Use update operation with doc_as_upsert for partial updates
                 return [
                     { update: { _id: docId, retry_on_conflict: args.retryOnConflict } },
